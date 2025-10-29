@@ -21,12 +21,14 @@ def distribution(n: int, start_x: int = 1) -> np.ndarray:
     return x
 
 def task_1(i_lims: list[int, int] = [1, 1000], n: int = int(1e6), start_pos: list[int] = [1, 10, 100, 500]):
+    fig, [logs, bars] = plt.subplots(1, 2)
+
     i = np.arange(i_lims[0], i_lims[1]+1)
 
     pi_ = i**(-3/2)
     pi = pi_ / pi_.sum()
 
-    plt.plot(i, pi, '.', label='"Справжній"', linewidth=2, markersize=1)
+    logs.plot(i, pi, '.', label='"Справжній"', linewidth=2, markersize=1)
     
     for pos in start_pos:
         samples = distribution(n, pos)
@@ -35,12 +37,12 @@ def task_1(i_lims: list[int, int] = [1, 1000], n: int = int(1e6), start_pos: lis
         # counts = np.bincount(samples, minlength=i_lims[1]+1)[1:]
         # emp = counts / counts.sum()
 
-        plt.plot(i, mcmc, '.', label=f'Через алгоритм, стартова позиція: {pos}', linewidth=1, markersize=0.8)
+        logs.plot(i, mcmc, '.', label=f'Через алгоритм, стартова позиція: {pos}', linewidth=1, markersize=0.8)
 
-    plt.xlim(*i_lims)
-    plt.yscale('log')
-    plt.legend()
-    plt.title('Порівняння теоретичного і через алгоритм (логарифмічна шкала)')
-    plt.xlabel('Значення');
-    plt.ylabel('Ймовірність')
+    logs.set_xlim(*i_lims)
+    logs.set_yscale('log')
+    logs.legend()
+    logs.set_title('Порівняння теоретичного і через алгоритм (логарифмічна шкала)')
+    logs.xlabel('Значення');
+    logs.ylabel('Ймовірність')
     plt.show()
