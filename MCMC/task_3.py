@@ -14,9 +14,8 @@ def _ising_2d_energy(grid: np.ndarray, grid_size: int, beta: float):
     jnn = (j - 1)
     neighbors = grid[ipp, j] + grid[i, jpp] + grid[inn, j] + grid[i, jnn]
 
-    energy = 2 * spin * neighbors
-    if energy < 0 or np.random.rand() < np.exp(-beta * energy):
-        spin = -spin
+    energy = neighbors
+    spin = 1 if np.random.rand() < 1 / (1 + np.exp(-2 * beta * energy)) else -1
     grid[i, j] = spin
     return grid
 
@@ -51,4 +50,4 @@ def task_3(betas: list, grid_size: int = 50, iterations: int = 100000):
         plt.show()
 
 if __name__ == '__main__':
-    task_3([0.1, 0.4, 1.5], grid_size=200, iterations=int(1e6))
+    task_3([-1.5, 1.5], grid_size=200, iterations=int(1e6))
