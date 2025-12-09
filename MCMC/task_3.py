@@ -5,7 +5,7 @@ import numba as nb
 
 @nb.njit
 def _ising_2d_energy(grid: np.ndarray, grid_size: int, beta: float):
-    i, j = np.random.randint(0, grid_size), np.random.randint(0, grid_size)
+    i, j = np.random.randint(0, grid_size, 2)
     spin = grid[i, j]
 
     ipp = (i + 1) % grid_size
@@ -14,8 +14,8 @@ def _ising_2d_energy(grid: np.ndarray, grid_size: int, beta: float):
     jnn = (j - 1)
     neighbors = grid[ipp, j] + grid[i, jpp] + grid[inn, j] + grid[i, jnn]
 
-    dE = 2 * spin * neighbors
-    if dE < 0 or np.random.rand() < np.exp(-beta * dE):
+    energy = 2 * spin * neighbors
+    if energy < 0 or np.random.rand() < np.exp(-beta * energy):
         spin = -spin
     grid[i, j] = spin
     return grid
