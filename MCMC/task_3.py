@@ -2,25 +2,38 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def ising_1d(L=30, beta=0.4, steps=100000):
+def _ising_2d_simulation(beta=0.4, L=50, steps=100000):
     grid = np.random.choice([-1, 1], size=(L, L))
+    start_grid = grid.copy()
     
     for _ in range(steps):
         i, j = np.random.randint(0, L, 2)
         S = grid[i, j]
-        neighbors = grid[(i+1)%L, j] + grid[(i-1)%L, j] + grid[i, (j+1)%L] + grid[i, (j-1)%L]
+        neighbors = (grid[(i+1)%L, j] + grid[(i-1)%L, j] + grid[i, (j+1)%L] + grid[i, (j-1)%L])
         dE = 2 * S * neighbors
         if dE < 0 or np.random.rand() < np.exp(-beta * dE):
             grid[i, j] = -S
             
-    return grid
+    return start_grid, grid
 
-def task_3(betas = [-1.5, -0.5, -0.1, 0, 0.1, 0.5, 1.5], **kwargs):
-    plt.figure(**kwargs)
-    for idx, b in enumerate(betas):
-        final_grid = ising_1d(beta=b)
-        plt.subplot(len(betas)//2, len(betas)//2, idx+1)
-        plt.imshow(final_grid, cmap='binary', interpolation='nearest')
-        plt.title(f'Beta = {b}')
+def task_3(betas: list, L: int = 50, steps: int = 100000):
+    for b in betas:
+        start, end = _ising_2d_simulation(beta=b, L=L, steps=steps)
+        
+        plt.figure(figsize=(10, 5))
+        plt.suptitle(f'Beta = {b}', fontsize=16)
+
+        cmap='binary'
+        plt.subplot(1, 2, 1)
+        plt.title("start")
+        plt.imshow(start, cmap=cmap, interpolation='nearest')
         plt.axis('off')
-    plt.show()
+
+        # Графік 2: End
+        plt.subplot(1, 2, 2)
+        plt.title("end")
+        plt.imshow(end, cmap=cmap, interpolation='nearest')
+        plt.axis('off')
+
+        plt.tight_layout()
+        plt.show()
