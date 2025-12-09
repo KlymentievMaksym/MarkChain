@@ -1,12 +1,13 @@
 import random
 import numpy as np
-import numba
 import collections
 import chardet
 import string
-import tqdm
+from tqdm import trange
 
 alphabet = list(string.ascii_lowercase)
+alphabet_set = set(alphabet)
+epsilon = 1e-12
 
 def make_cipher_map():
     shuffled = alphabet.copy()
@@ -17,19 +18,18 @@ def cipher(text, cipher_map: dict = None):
     if cipher_map is None:
         cipher_map = make_cipher_map()
     result = []
-    for ch in text.lower():
-        if ch in cipher_map:
-            result.append(cipher_map[ch])
+    for ch in text:
+        low = ch.lower()
+        if low in cipher_map:
+            mapped = cipher_map[low]
+            # preserve case
+            result.append(mapped.upper() if ch.isupper() else mapped)
         else:
             result.append(ch)
     return ''.join(result)
 
 def clean(text):
-    result = []
-    for ch in text.lower():
-        if ch in alphabet:
-            result.append(ch)
-    return ''.join(result)
+    return ''.join(ch for ch in text.lower() if ch in alphabet_set)
 
 def load_text(path: str) -> str:
     with open(path, 'rb') as f:
@@ -40,95 +40,120 @@ def load_text(path: str) -> str:
 def get_bigrams(text):
     return [text[i:i+2] for i in range(len(text)-1)]
 
-def receive_array_counts(counter: collections.Counter, learn_characters: dict):
-    len_ch = len(learn_characters)
-    counter_keys = sorted(list(counter.keys()))
-    M = np.zeros((len_ch, len_ch), dtype=float)
+def receive_array_counts(counter: collections.Counter, learn_unique_character: list, smoothing: float = 1.0):
+    len_ch = len(learn_unique_character)
+    indexes = {char: i for i, char in enumerate(learn_unique_character)}
+    counts = np.zeros((len_ch, len_ch), dtype=float)
 
-    for bigram in counter_keys:
-        M[learn_characters[bigram[0]], learn_characters[bigram[1]]] = counter[bigram]
+    for bigram, cnt in counter.items():
+        a, b = bigram[0], bigram[1]
+        if a in indexes and b in indexes:
+            counts[indexes[a], indexes[b]] = cnt
 
-    M += 1
-    for index in range(M.shape[0]):
-        M[index] = M[index] / M[index].sum()
-    M = np.log(M)
+    counts += smoothing
+    row_sums = counts.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1.0
+    probs = counts / row_sums
+    return probs
 
-    return M
+def log_score(mapping: dict, logM: np.array, ciphered_text: str, learn_indexes: dict):
+    score = 0.0
+    for i in range(len(ciphered_text) - 1):
+        char_first = ciphered_text[i].lower()
+        char_second = ciphered_text[i+1].lower()
+        if char_first in mapping and char_second in mapping:
+            char_first_mapped = mapping[char_first]
+            char_second_mapped = mapping[char_second]
+            if char_first_mapped in learn_indexes and char_second_mapped in learn_indexes:
+                score += logM[learn_indexes[char_first_mapped], learn_indexes[char_second_mapped]]
+            else:
+                score += np.log(epsilon)
+        else:
+            score += np.log(epsilon)
+    return score
 
-@numba.jit()
-def score(f: np.ndarray, M: np.array, text_indices: np.ndarray) -> float:
-    score = 0
-    for index in range(len(text_indices) - 1):
-        score += M[f[text_indices[index]], f[text_indices[index+1]]]
-    return score #/ len(text_indices)
+def swap_mapping(mapping: dict):
+    new_map = mapping.copy()
+    a, b = random.sample(alphabet, 2)
+    new_map[a], new_map[b] = new_map[b], new_map[a]
+    return new_map
 
-@numba.jit()
-def swap(f: np.ndarray) -> np.ndarray:
-    f_ = f.copy()
-    i, j = np.random.choice(len(f), 2, replace=False)
-    f_[i], f_[j] = f_[j], f_[i]
-    return f_
+def find_best_score(f: dict, logM: np.array, ciphered_text: str, learn_indexes: dict, current_score: float):
+    f_candidate = swap_mapping(f)
+    score_candidate = log_score(f_candidate, logM, ciphered_text, learn_indexes)
 
+    if score_candidate >= current_score:
+        return f_candidate, score_candidate
+    else:
+        u = random.random()
+        prob = np.exp(score_candidate - current_score)
+        if u < prob:
+            return f_candidate, score_candidate
+        else:
+            return f, current_score
 
-def task_2(path_to_learn: str, path_to_decipher: str, iterations: int = 10, every: int = 1, T = 1):
-    # n = 100000
+def task_2(path_to_learn: str, path_to_decipher: str, iterations: int = 2000, report_every: int = 1000):
+    raw_learn = load_text(path_to_learn)
+    raw_decipher = load_text(path_to_decipher)
 
-    text_to_learn = load_text(path_to_learn)
-    text_to_deciphr = load_text(path_to_decipher)
-    text_to_learn = clean(text_to_learn)
-    text_to_decipher_r = cipher(text_to_deciphr)
-    text_to_decipher = clean(text_to_decipher_r)
+    text_to_learn = clean(raw_learn)
+    plaintext_target = raw_decipher
+    cleaned_plain_target = clean(plaintext_target)
 
-    learn_unique_character = np.array(sorted(list(set(text_to_learn))))
-    learn_characters = {ch: i for i, ch in enumerate(learn_unique_character)}
+    true_cipher_map = make_cipher_map()
+    ciphered_target_full = cipher(plaintext_target, true_cipher_map)
+    ciphered_clean_target = clean(ciphered_target_full)
 
     learn_bigrams = get_bigrams(text_to_learn)
-    # decipher_bigrams = get_bigrams(text_to_decipher)
-    text_indices = np.array([learn_characters[ch] for ch in text_to_decipher], dtype=int)  #[:n]
-
     counter = collections.Counter(learn_bigrams)
-    M = receive_array_counts(counter, learn_characters)
+    learn_unique_character = sorted(list(set(text_to_learn)))
+    learn_indexes = {c: i for i, c in enumerate(learn_unique_character)}
 
-    f = np.arange(len(learn_unique_character))
-    # f = dict(zip(alphabet, alphabet))
+    M = receive_array_counts(counter, learn_unique_character, smoothing=1.0)
+    logM = np.log(M + epsilon)
 
-    best_f = f.copy()
-    best_score = score(f, M, text_indices)
+    f = dict(zip(alphabet, alphabet))
+    current_score = log_score(f, logM, ciphered_clean_target, learn_indexes)
+    best_map = f.copy()
+    best_score = current_score
 
-    f_score = best_score
-    for iteration in tqdm.tqdm(range(iterations)):
-        f_ = swap(f)
-        f_score_ = score(f_, M, text_indices)
-        accept = f_score_ / f_score
-        # if accept > 0 or np.random.rand() < np.exp(accept / T):
-        if np.random.rand() < accept:
-            f, f_score = f_, f_score_
-        if f_score > best_score:
-            best_score, best_f = f_score, f.copy()
+    print(f"Start score: {current_score:.2f}, unique learn chars: {len(learn_unique_character)}\n")
+    for it in trange(1, iterations + 1):
+        f, current_score = find_best_score(f, logM, ciphered_clean_target, learn_indexes, current_score)
+        if current_score > best_score:
+            best_score = current_score
+            best_map = f.copy()
+        if it % report_every == 0 or it == 1:
+            print(f"\niter {it}/{iterations} | curr {current_score:.2f} | best {best_score:.2f}\n")
 
-        # T *= 0.999
+    deciphered_full = []
+    for char in ciphered_target_full:
+        char_low = char.lower()
+        if char_low in best_map:
+            mapped = best_map[char_low]
+            deciphered_full.append(mapped.upper() if char.isupper() else mapped)
+        else:
+            deciphered_full.append(char)
+    deciphered_full_text = ''.join(deciphered_full)
 
-        if (iteration + 1) % every == 0:
-            print(f"[Best score] Iter {iteration + 1}: {best_score}")
-
-
-    # F = {ch: learn_unique_character[f[i]] for i, ch in enumerate(learn_unique_character)}
-    # best_F = {ch: learn_unique_character[best_f[i]] for i, ch in enumerate(learn_unique_character)}
-    F = {str(ls): str(ls_) for ls, ls_ in zip(learn_unique_character, learn_unique_character[f])}
-    best_F = {str(ls): str(ls_) for ls, ls_ in zip(learn_unique_character, learn_unique_character[best_f])}
-
-    n = 100
-
-    # print(f"[F] {F}")
-    print(f"[Best F] {best_F}")
-    print(f"[Best score] {best_score}")
-    # print(f"[F] {cipher(text_to_decipher_r[:n], f)}")
-    decode_map = {learn_unique_character[f[i]]: learn_unique_character[i] for i in range(len(best_f))}
-    print(f"[Ciphered] {text_to_decipher_r[:n]}\n")
-    print(f"[Decipher] {cipher(text_to_decipher_r[:n], best_F)}\n")
-    print(f"[Real text] {text_to_deciphr[:n]}")
-
-
+    print("\n[Example outputs]\n")
+    index = random.randint(0, len(ciphered_target_full) - 200)
+    print("[Ciphered sample]\n", ciphered_target_full[index:index+200])
+    print("\n[Deciphered sample]\n", deciphered_full_text[index:index+200])
+    print("\n[True mapping]")
+    print(f"{true_cipher_map}")
+    print("\n[Recovered mapping]")
+    print(f"{best_map}")
+    return {
+        "best_map": best_map,
+        "best_score": best_score,
+        "deciphered_text": deciphered_full_text,
+        "ciphered_text": ciphered_target_full,
+        "true_cipher_map": true_cipher_map
+    }
 
 if __name__ == '__main__':
-    task_2("./Data/TheWarOfTheWorlds.txt", "./Data/TheTimeMachine.txt", 1_000_000, every = 250_000)
+    res = task_2("./Data/TheWarOfTheWorlds.txt", "./Data/TheTimeMachine.txt", iterations=1500, report_every=100)
+    with open("./Data/Deciphered.txt", "w", encoding="utf-8") as out:
+        out.write(res["deciphered_text"])
+    print("\n[Saved] ./Data/Deciphered.txt")
